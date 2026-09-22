@@ -1,0 +1,176 @@
+---
+- name: Configure and deploy TravelMemory web server
+  hosts: web
+  become: true
+  gather_facts: true
+
+  tasks:
+    - name: Update apt package cache
+      ansible.builtin.apt:
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: Install web server dependencies
+      ansible.builtin.apt:
+        name:
+          - git
+          - nodejs
+          - npm
+          - nginx
+          - curl
+          - ufw
+        state: present
+
+    - name: Display installed Node.js version
+      ansible.builtin.command:
+        cmd: node --version
+      register: node_version
+      changed_when: false
+
+    - name: Show Node.js version
+      ansible.builtin.debug:
+        var: node_version.stdout
+
+    - name: Display installed NPM version
+      ansible.builtin.command:
+        cmd: npm --version
+      register: npm_version
+      changed_when: false
+
+    - name: Show NPM version
+      ansible.builtin.debug:
+        var: npm_version.stdout
+
+    - name: Create TravelMemory application directory
+      ansible.builtin.file:
+        path: "{{ app_dir }}"
+        state: directory
+        owner: "{{ app_user }}"
+        group: "{{ app_user }}"
+        mode: "0755"
+
+    - name: Clone TravelMemory GitHub repository
+      ansible.builtin.git:
+        repo: "{{ repository_url }}"
+        dest: "{{ app_dir }}"
+        version: "{{ repository_branch }}"
+        force: true
+        update: true
+      become_user: "{{ app_user }}"
+
+    - name: Install backend dependencies
+      ansible.builtin.command:
+        cmd: npm install
+        chdir: "{{ app_dir }}/backend"
+      become_user: "{{ app_user }}"
+
+    - name: Deploy backend environment configuration
+      ansible.builtin.template:
+        src: templates/backend.env.j2
+        dest: "{{ app_dir }}/backend/.env"
+        owner: "{{ app_user }}"
+        group: "{{ app_user }}"
+        mode: "0600"
+      no_log: true
+
+    - name: Configure frontend backend URL
+      ansible.builtin.copy:
+        dest: "{{ app_dir }}/frontend/.env.production"
+        content: |
+          REACT_APP_BACKEND_URL=/api
+        owner: "{{ app_user }}"
+        group: "{{ app_user }}"
+        mode: "0644"
+
+    - name: Install frontend dependencies
+      ansible.builtin.command:
+        cmd: npm install
+        chdir: "{{ app_dir }}/frontend"
+      become_user: "{{ app_user }}"
+
+    - name: Build React production application
+      ansible.builtin.command:
+        cmd: npm run build
+        chdir: "{{ app_dir }}/frontend"
+      environment:
+        NODE_ENV: production
+      become_user: "{{ app_user }}"
+
+    - name: Install TravelMemory systemd service
+      ansible.builtin.template:
+        src: templates/travelmemory.service.j2
+        dest: /etc/systemd/system/travelmemory.service
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: Reload systemd
+      ansible.builtin.systemd:
+        daemon_reload: true
+
+    - name: Enable and start TravelMemory backend
+      ansible.builtin.systemd:
+        name: travelmemory
+        state: restarted
+        enabled: true
+
+    - name: Install Nginx TravelMemory configuration
+      ansible.builtin.template:
+        src: templates/nginx-travelmemory.conf.j2
+        dest: /etc/nginx/sites-available/travelmemory
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: Enable TravelMemory Nginx site
+      ansible.builtin.file:
+        src: /etc/nginx/sites-available/travelmemory
+        dest: /etc/nginx/sites-enabled/travelmemory
+        state: link
+
+    - name: Disable default Nginx site
+      ansible.builtin.file:
+        path: /etc/nginx/sites-enabled/default
+        state: absent
+
+    - name: Validate Nginx configuration
+      ansible.builtin.command:
+        cmd: nginx -t
+      changed_when: false
+
+    - name: Restart and enable Nginx
+      ansible.builtin.systemd:
+        name: nginx
+        state: restarted
+        enabled: true
+
+    - name: Wait for Node.js backend
+      ansible.builtin.wait_for:
+        host: 127.0.0.1
+        port: "{{ backend_port }}"
+        delay: 2
+        timeout: 30
+
+    - name: Test Express backend
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ backend_port }}/hello"
+        method: GET
+        status_code: 200
+        return_content: true
+      register: backend_test
+
+    - name: Display Express response
+      ansible.builtin.debug:
+        var: backend_test.content
+
+    - name: Test backend through Nginx
+      ansible.builtin.uri:
+        url: http://127.0.0.1/api/hello
+        method: GET
+        status_code: 200
+        return_content: true
+      register: nginx_test
+
+    - name: Display Nginx proxy response
+      ansible.builtin.debug:
+        var: nginx_test.content

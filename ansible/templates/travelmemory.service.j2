@@ -1,0 +1,28 @@
+[Unit]
+Description=TravelMemory Node.js Backend
+After=network.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+
+User={{ app_user }}
+Group={{ app_user }}
+
+WorkingDirectory={{ app_dir }}/backend
+
+EnvironmentFile={{ app_dir }}/backend/.env
+
+ExecStart=/usr/bin/node {{ app_dir }}/backend/index.js
+
+Restart=always
+RestartSec=5
+
+StandardOutput=journal
+StandardError=journal
+
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

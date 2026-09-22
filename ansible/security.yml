@@ -1,0 +1,144 @@
+---
+- name: Harden TravelMemory web server
+  hosts: web
+  become: true
+
+  tasks:
+    - name: Install UFW
+      ansible.builtin.apt:
+        name: ufw
+        state: present
+        update_cache: true
+
+    - name: Reset UFW on web server
+      community.general.ufw:
+        state: reset
+
+    - name: Set default incoming policy to deny
+      community.general.ufw:
+        direction: incoming
+        policy: deny
+
+    - name: Set default outgoing policy to allow
+      community.general.ufw:
+        direction: outgoing
+        policy: allow
+
+    - name: Allow SSH on web server
+      community.general.ufw:
+        rule: allow
+        port: "22"
+        proto: tcp
+
+    - name: Allow HTTP on web server
+      community.general.ufw:
+        rule: allow
+        port: "80"
+        proto: tcp
+
+    - name: Enable UFW on web server
+      community.general.ufw:
+        state: enabled
+
+    - name: Disable SSH root login
+      ansible.builtin.lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: '^#?\s*PermitRootLogin'
+        line: "PermitRootLogin no"
+        validate: "/usr/sbin/sshd -t -f %s"
+      notify: Restart SSH
+
+    - name: Disable SSH password authentication
+      ansible.builtin.lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: '^#?\s*PasswordAuthentication'
+        line: "PasswordAuthentication no"
+        validate: "/usr/sbin/sshd -t -f %s"
+      notify: Restart SSH
+
+    - name: Ensure public key authentication is enabled
+      ansible.builtin.lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: '^#?\s*PubkeyAuthentication'
+        line: "PubkeyAuthentication yes"
+        validate: "/usr/sbin/sshd -t -f %s"
+      notify: Restart SSH
+
+  handlers:
+    - name: Restart SSH
+      ansible.builtin.systemd:
+        name: ssh
+        state: restarted
+
+- name: Harden TravelMemory database server
+  hosts: database
+  become: true
+
+  tasks:
+    - name: Install UFW
+      ansible.builtin.apt:
+        name: ufw
+        state: present
+        update_cache: true
+
+    - name: Reset UFW on database server
+      community.general.ufw:
+        state: reset
+
+    - name: Set default incoming policy to deny
+      community.general.ufw:
+        direction: incoming
+        policy: deny
+
+    - name: Set default outgoing policy to allow
+      community.general.ufw:
+        direction: outgoing
+        policy: allow
+
+    - name: Allow SSH from public subnet
+      community.general.ufw:
+        rule: allow
+        src: "10.0.1.0/24"
+        port: "22"
+        proto: tcp
+
+    - name: Allow MongoDB from public subnet
+      community.general.ufw:
+        rule: allow
+        src: "10.0.1.0/24"
+        port: "27017"
+        proto: tcp
+
+    - name: Enable UFW on database server
+      community.general.ufw:
+        state: enabled
+
+    - name: Disable SSH root login
+      ansible.builtin.lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: '^#?\s*PermitRootLogin'
+        line: "PermitRootLogin no"
+        validate: "/usr/sbin/sshd -t -f %s"
+      notify: Restart SSH
+
+    - name: Disable SSH password authentication
+      ansible.builtin.lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: '^#?\s*PasswordAuthentication'
+        line: "PasswordAuthentication no"
+        validate: "/usr/sbin/sshd -t -f %s"
+      notify: Restart SSH
+
+    - name: Ensure public key authentication is enabled
+      ansible.builtin.lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: '^#?\s*PubkeyAuthentication'
+        line: "PubkeyAuthentication yes"
+        validate: "/usr/sbin/sshd -t -f %s"
+      notify: Restart SSH
+
+  handlers:
+    - name: Restart SSH
+      ansible.builtin.systemd:
+        name: ssh
+        state: restarted

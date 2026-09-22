@@ -1,0 +1,169 @@
+---
+- name: Configure MongoDB database server
+  hosts: database
+  become: true
+  gather_facts: true
+
+  tasks:
+    - name: Update apt package cache
+      ansible.builtin.apt:
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: Install required packages
+      ansible.builtin.apt:
+        name:
+          - gnupg
+          - curl
+          - ufw
+        state: present
+
+    - name: Download MongoDB signing key
+      ansible.builtin.get_url:
+        url: https://pgp.mongodb.com/server-8.0.asc
+        dest: /tmp/mongodb-server-8.0.asc
+        mode: "0644"
+
+    - name: Convert MongoDB signing key to GPG keyring
+      ansible.builtin.command:
+        cmd: >
+          gpg --dearmor --yes
+          --output /usr/share/keyrings/mongodb-server-8.0.gpg
+          /tmp/mongodb-server-8.0.asc
+      args:
+        creates: /usr/share/keyrings/mongodb-server-8.0.gpg
+
+    - name: Add MongoDB 8.0 repository
+      ansible.builtin.apt_repository:
+        repo: >-
+          deb [arch=amd64 signed-by=/usr/share/keyrings/mongodb-server-8.0.gpg]
+          https://repo.mongodb.org/apt/ubuntu
+          noble/mongodb-org/8.0 multiverse
+        filename: mongodb-org-8.0
+        state: present
+
+    - name: Update apt cache after adding MongoDB repository
+      ansible.builtin.apt:
+        update_cache: true
+
+    - name: Install MongoDB
+      ansible.builtin.apt:
+        name: mongodb-org
+        state: present
+
+    - name: Start and enable MongoDB
+      ansible.builtin.systemd:
+        name: mongod
+        state: started
+        enabled: true
+
+    - name: Wait for MongoDB to become available
+      ansible.builtin.wait_for:
+        host: 127.0.0.1
+        port: "{{ mongodb_port }}"
+        delay: 2
+        timeout: 30
+
+    - name: Check whether MongoDB administrator already exists
+      ansible.builtin.shell: |
+        mongosh \
+          --host 127.0.0.1 \
+          --port {{ mongodb_port }} \
+          --authenticationDatabase admin \
+          -u "{{ mongodb_admin_user }}" \
+          -p "{{ mongodb_admin_password }}" \
+          --quiet \
+          --eval 'db.runCommand({ ping: 1 })'
+      register: mongodb_admin_check
+      changed_when: false
+      failed_when: false
+      no_log: true
+
+    - name: Create initial MongoDB administrator
+      ansible.builtin.shell: |
+        mongosh admin \
+          --host 127.0.0.1 \
+          --port {{ mongodb_port }} \
+          --quiet \
+          --eval '
+          db.createUser({
+            user: "{{ mongodb_admin_user }}",
+            pwd: "{{ mongodb_admin_password }}",
+            roles: [
+              {
+                role: "userAdminAnyDatabase",
+                db: "admin"
+              },
+              {
+                role: "readWriteAnyDatabase",
+                db: "admin"
+              }
+            ]
+          })
+          '
+      when: mongodb_admin_check.rc != 0
+      no_log: true
+
+    - name: Create TravelMemory application database user
+      ansible.builtin.shell: |
+        mongosh "{{ mongodb_database }}" \
+          --host 127.0.0.1 \
+          --port {{ mongodb_port }} \
+          --authenticationDatabase admin \
+          -u "{{ mongodb_admin_user }}" \
+          -p "{{ mongodb_admin_password }}" \
+          --quiet \
+          --eval '
+          if (db.getUser("{{ mongodb_app_user }}") == null) {
+            db.createUser({
+              user: "{{ mongodb_app_user }}",
+              pwd: "{{ mongodb_app_password }}",
+              roles: [
+                {
+                  role: "readWrite",
+                  db: "{{ mongodb_database }}"
+                }
+              ]
+            })
+          }
+          '
+      no_log: true
+
+    - name: Deploy secured MongoDB configuration
+      ansible.builtin.template:
+        src: templates/mongod.conf.j2
+        dest: /etc/mongod.conf
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Restart MongoDB
+
+    - name: Flush MongoDB restart handler
+      ansible.builtin.meta: flush_handlers
+
+    - name: Wait for MongoDB after configuration
+      ansible.builtin.wait_for:
+        host: "{{ ansible_host }}"
+        port: "{{ mongodb_port }}"
+        delay: 2
+        timeout: 30
+
+    - name: Verify authenticated MongoDB connection
+      ansible.builtin.shell: |
+        mongosh \
+          --host 127.0.0.1 \
+          --port {{ mongodb_port }} \
+          --authenticationDatabase admin \
+          -u "{{ mongodb_admin_user }}" \
+          -p "{{ mongodb_admin_password }}" \
+          --quiet \
+          --eval 'db.runCommand({ ping: 1 })'
+      changed_when: false
+      no_log: true
+
+  handlers:
+    - name: Restart MongoDB
+      ansible.builtin.systemd:
+        name: mongod
+        state: restarted
+        enabled: true

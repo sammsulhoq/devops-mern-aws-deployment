@@ -1,0 +1,18 @@
+---
+app_name: travelmemory
+app_user: ubuntu
+app_dir: /opt/travelmemory
+
+repository_url: "https://github.com/UnpredictablePrashant/TravelMemory.git"
+repository_branch: "main"
+
+backend_port: 3001
+
+mongodb_port: 27017
+mongodb_database: travelmemory
+
+mongodb_admin_user: travelmemory_admin
+mongodb_admin_password: "TravelMemoryAdmin2026"
+
+mongodb_app_user: travelmemory_app
+mongodb_app_password: "TravelMemoryApp2026"
